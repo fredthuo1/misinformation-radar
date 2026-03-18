@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Misinformation Radar</title>
+    <style>
+        :root {
+            --bg: #0b1020;
+            --panel: #121a33;
+            --panel-2: #182347;
+            --text: #eaf0ff;
+            --muted: #a9b4d0;
+            --accent: #7aa2ff;
+            --good: #49c27d;
+            --warn: #f0b34a;
+            --danger: #ef6b73;
+            --border: #27345f;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: linear-gradient(180deg, #0b1020 0%, #0d1430 100%);
+            color: var(--text);
+        }
+
+        .wrap {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 34px;
+        }
+
+        p.sub {
+            margin: 0 0 20px;
+            color: var(--muted);
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background: var(--accent);
+            color: #081122;
+            border: 0;
+            border-radius: 10px;
+            padding: 12px 16px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+            button.secondary {
+                background: #27345f;
+                color: var(--text);
+            }
+
+            button:disabled {
+                opacity: 0.6;
+                cursor: wait;
+            }
+
+        .status {
+            min-height: 24px;
+            margin-bottom: 18px;
+            color: var(--muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+        }
+
+        .metric {
+            font-size: 28px;
+            font-weight: 800;
+            margin-top: 8px;
+        }
+
+        .small {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .section-title {
+            margin: 24px 0 12px;
+            font-size: 22px;
+        }
+
+        .narratives {
+            display: grid;
+            gap: 16px;
+        }
+
+        .narrative-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 18px;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .low {
+            background: rgba(73,194,125,.18);
+            color: var(--good);
+        }
+
+        .medium {
+            background: rgba(240,179,74,.18);
+            color: var(--warn);
+        }
+
+        .high {
+            background: rgba(239,107,115,.18);
+            color: var(--danger);
+        }
+
+        .claims {
+            margin-top: 14px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .claim {
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+        }
+
+        a {
+            color: #9ec0ff;
+        }
+
+        .empty {
+            color: var(--muted);
+            border: 1px dashed var(--border);
+            border-radius: 14px;
+            padding: 24px;
+            text-align: center;
+            background: rgba(255,255,255,0.02);
+        }
+
+        @media (max-width: 900px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Misinformation Radar</h1>
+        <p class="sub">AI-powered dashboard for extracting claims and grouping them into misinformation narratives.</p>
+
+        <div class="controls">
+            <button id="ingestBtn">Ingest feed</button>
+            <button id="buildBtn" class="secondary">Build narratives</button>
+            <button id="refreshBtn" class="secondary">Refresh</button>
+        </div>
+
+        <div id="status" class="status">Ready.</div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="small">Narratives</div>
+                <div class="metric" id="metricNarratives">0</div>
+            </div>
+            <div class="card">
+                <div class="small">Claims</div>
+                <div class="metric" id="metricClaims">0</div>
+            </div>
+            <div class="card">
+                <div class="small">Highest risk</div>
+                <div class="metric" id="metricHighestRisk">0</div>
+            </div>
+        </div>
+
+        <div class="section-title">Detected narratives</div>
+        <div id="narratives" class="narratives"></div>
+    </div>
+
+    <script>
+    const statusEl = document.getElementById('status');
+    const ingestBtn = document.getElementById('ingestBtn');
+    const buildBtn = document.getElementById('buildBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+
+    const metricNarratives = document.getElementById('metricNarratives');
+    const metricClaims = document.getElementById('metricClaims');
+    const metricHighestRisk = document.getElementById('metricHighestRisk');
+    const narrativesEl = document.getElementById('narratives');
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, options);
+      const text = await res.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(text || 'Unknown response');
+      }
+      if (!res.ok) {
+        throw new Error(data.detail || JSON.stringify(data));
+      }
+      return data;
+    }
+
+    function setBusy(isBusy) {
+      ingestBtn.disabled = isBusy;
+      buildBtn.disabled = isBusy;
+      refreshBtn.disabled = isBusy;
+    }
+
+    function renderNarratives(narratives) {
+      metricNarratives.textContent = narratives.length;
+
+      const claimCount = narratives.reduce((sum, n) => sum + (n.claim_count || 0), 0);
+      metricClaims.textContent = claimCount;
+
+      const highestRisk = narratives.length
+        ? Math.max(...narratives.map(n => Number(n.risk_score || 0)))
+        : 0;
+      metricHighestRisk.textContent = highestRisk;
+
+      if (!narratives.length) {
+        narrativesEl.innerHTML = `
+          <div class="empty">
+            No narratives yet. Click <strong>Ingest feed</strong>, then <strong>Build narratives</strong>.
+          </div>
+        `;
+        return;
+      }
+
+      narrativesEl.innerHTML = narratives.map(n => `
+        <div class="narrative-card">
+          <div class="row">
+            <div>
+              <div style="font-size: 22px; font-weight: 800;">${escapeHtml(n.title)}</div>
+              <div class="small">Topic: ${escapeHtml(n.topic)} · Claims: ${n.claim_count}</div>
+            </div>
+            <div>
+              <span class="badge ${n.risk_level}">${n.risk_level.toUpperCase()} · ${n.risk_score}</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 12px;">${escapeHtml(n.summary || '')}</div>
+          <div class="small" style="margin-top: 8px;">Keywords: ${escapeHtml(n.top_keywords || '—')}</div>
+
+          <div class="claims">
+            ${(n.claims || []).map(c => `
+              <div class="claim">
+                <div style="font-weight: 700; margin-bottom: 6px;">${escapeHtml(c.normalized_claim)}</div>
+                <div class="small">${escapeHtml(c.category)} · confidence ${Number(c.confidence || 0).toFixed(2)}</div>
+                <div style="margin-top: 8px;">
+                  <a href="${c.url}" target="_blank" rel="noreferrer">Open source</a>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    async function loadNarratives() {
+      const narratives = await api('/api/narratives');
+      renderNarratives(narratives);
+    }
+
+    ingestBtn.addEventListener('click', async () => {
+      try {
+        setBusy(true);
+        statusEl.textContent = 'Ingesting recent feed items through the agent...';
+        const result = await api('/api/ingest?limit=3', { method: 'POST' });
+        statusEl.textContent = `Ingest complete. Created ${result.created}, skipped ${result.skipped}, errors ${result.errors.length}.`;
+      } catch (err) {
+        statusEl.textContent = `Ingest failed: ${err.message}`;
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    buildBtn.addEventListener('click', async () => {
+      try {
+        setBusy(true);
+        statusEl.textContent = 'Building narratives from saved claims...';
+        const result = await api('/api/build', { method: 'POST' });
+        statusEl.textContent = `Built ${result.narratives_created} narratives.`;
+        await loadNarratives();
+      } catch (err) {
+        statusEl.textContent = `Build failed: ${err.message}`;
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    refreshBtn.addEventListener('click', async () => {
+      try {
+        setBusy(true);
+        statusEl.textContent = 'Refreshing dashboard...';
+        await loadNarratives();
+        statusEl.textContent = 'Dashboard refreshed.';
+      } catch (err) {
+        statusEl.textContent = `Refresh failed: ${err.message}`;
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    loadNarratives().catch(err => {
+      statusEl.textContent = `Initial load failed: ${err.message}`;
+    });
+    </script>
+</body>
+</html>

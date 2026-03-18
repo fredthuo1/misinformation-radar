@@ -19,12 +19,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @app.get("/")
 def root():
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/api/health")
