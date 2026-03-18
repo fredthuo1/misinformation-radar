@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+backend/.env
+backend/mradar.db
+.venv/
+venv/
+.vs
