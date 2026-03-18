@@ -114,7 +114,12 @@ Use this exact schema:
 
     result = call_agent(prompt)
     normalized_claim = str(result.get("normalized_claim", title)).strip()
-    normalized_claim = re.sub(r"^(Claims allege|Posts claim|Claim|Claims that)\s+", "", normalized_claim, flags=re.I).strip(" .")
+    normalized_claim = re.sub(
+        r"^(Claims allege|Posts claim|Post claims|Claim|Claims that)\s+",
+        "",
+        normalized_claim,
+        flags=re.I,
+    ).strip(" .")
 
     return {
         "task": "claim_extraction",
@@ -126,21 +131,27 @@ Use this exact schema:
     }
 
 
-def ingest_feed(limit: int = 5) -> dict[str, Any]:
+def ingest_feed(target_new: int = 3, max_scan: int = 30) -> dict[str, Any]:
     db = SessionLocal()
     created = 0
     skipped = 0
-    errors = []
+    scanned = 0
+    errors: list[str] = []
 
     try:
-        entries = fetch_feed(limit=limit)
-        print(f"[INGEST] Found {len(entries)} feed entries")
+        entries = fetch_feed(limit=max_scan)
+        print(f"[INGEST] Loaded {len(entries)} feed entries, target_new={target_new}, max_scan={max_scan}")
 
         for idx, entry in enumerate(entries, start=1):
+            if created >= target_new:
+                break
+
+            scanned += 1
             title = getattr(entry, "title", "(no title)")
+            link = getattr(entry, "link", "")
             print(f"[INGEST] {idx}/{len(entries)} Processing: {title}")
 
-            existing = db.query(Claim).filter(Claim.url == entry.link).first()
+            existing = db.query(Claim).filter(Claim.url == link).first()
             if existing:
                 skipped += 1
                 print("[INGEST] Skipped existing")
@@ -153,7 +164,7 @@ def ingest_feed(limit: int = 5) -> dict[str, Any]:
                 claim = Claim(
                     source="PolitiFact",
                     title=title,
-                    url=entry.link,
+                    url=link,
                     published_at=_safe_datetime(entry),
                     normalized_claim=extracted["normalized_claim"],
                     category=extracted["category"],
@@ -165,6 +176,7 @@ def ingest_feed(limit: int = 5) -> dict[str, Any]:
                 db.commit()
                 db.refresh(claim)
                 created += 1
+                print(f"[INGEST] Saved claim id={claim.id}")
 
             except Exception as e:
                 db.rollback()
@@ -178,7 +190,13 @@ def ingest_feed(limit: int = 5) -> dict[str, Any]:
     return {
         "created": created,
         "skipped": skipped,
+        "scanned": scanned,
         "errors": errors,
+        "message": (
+            "No new unseen fact-checks found in the current feed window."
+            if created == 0
+            else f"Added {created} new fact-check(s)."
+        ),
     }
 
 
@@ -224,8 +242,13 @@ def build_narratives() -> dict[str, Any]:
     db = SessionLocal()
     try:
         claims = db.query(Claim).all()
+        print(f"[BUILD] Claims found: {len(claims)}")
+
         if not claims:
-            return {"narratives_created": 0, "message": "No claims available. Ingest feed first."}
+            return {
+                "narratives_created": 0,
+                "message": "No claims available. Ingest feed first.",
+            }
 
         for narrative in db.query(Narrative).all():
             db.delete(narrative)
@@ -236,6 +259,7 @@ def build_narratives() -> dict[str, Any]:
         db.commit()
 
         texts = [c.normalized_claim for c in claims]
+        print(f"[BUILD] Texts: {texts}")
 
         if len(claims) == 1:
             labels = [0]
@@ -244,6 +268,8 @@ def build_narratives() -> dict[str, Any]:
             X = vectorizer.fit_transform(texts)
 
             n_clusters = min(max(2, len(claims) // 2), len(claims))
+            print(f"[BUILD] Using n_clusters={n_clusters}")
+
             clustering = AgglomerativeClustering(n_clusters=n_clusters)
             labels = clustering.fit_predict(X.toarray())
 
@@ -253,7 +279,9 @@ def build_narratives() -> dict[str, Any]:
 
         created = 0
 
-        for _, cluster_claims in grouped.items():
+        for label, cluster_claims in grouped.items():
+            print(f"[BUILD] Cluster {label} size={len(cluster_claims)}")
+
             sorted_claims = sorted(
                 cluster_claims,
                 key=lambda c: (c.published_at or datetime.min),
@@ -261,16 +289,18 @@ def build_narratives() -> dict[str, Any]:
             )
             representative = sorted_claims[0]
 
-            words = []
+            words: list[str] = []
             for c in cluster_claims:
                 words.extend(re.findall(r"\b[a-zA-Z]{4,}\b", c.normalized_claim.lower()))
 
-            stop = {"claim", "claims", "posts", "false", "falsely", "says", "said", "about", "with", "from", "that", "this", "they", "have", "after", "will"}
+            stop = {
+                "claim", "claims", "posts", "false", "falsely", "says", "said",
+                "about", "with", "from", "that", "this", "they", "have", "after",
+                "will", "there", "their", "what", "when", "where", "does", "said"
+            }
             top_words = [w for w, _ in Counter(w for w in words if w not in stop).most_common(6)]
 
-            topic_counts = Counter(c.risk_domain for c in cluster_claims)
-            topic = topic_counts.most_common(1)[0][0] if topic_counts else "general"
-
+            topic = Counter(c.risk_domain for c in cluster_claims).most_common(1)[0][0]
             risk_score = _compute_risk_score(cluster_claims, topic)
             risk_level = _risk_level(risk_score)
 
@@ -296,8 +326,12 @@ def build_narratives() -> dict[str, Any]:
                 c.narrative_id = narrative.id
             db.commit()
             created += 1
+            print(f"[BUILD] Saved narrative id={narrative.id}")
 
-        return {"narratives_created": created}
+        return {
+            "narratives_created": created,
+            "message": f"Built {created} narrative(s).",
+        }
 
     finally:
         db.close()

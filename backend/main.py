@@ -4,7 +4,8 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from database import Base, engine
+from database import Base, engine, SessionLocal
+from models import Claim, Narrative
 from services import build_narratives, get_claims, get_narratives, ingest_feed
 
 Base.metadata.create_all(bind=engine)
@@ -33,13 +34,29 @@ def health():
 
 
 @app.post("/api/ingest")
-def api_ingest(limit: int = Query(default=3, ge=1, le=20)):
-    return ingest_feed(limit=limit)
+def api_ingest(
+    target_new: int = Query(default=3, ge=1, le=20),
+    max_scan: int = Query(default=30, ge=1, le=100),
+):
+    return ingest_feed(target_new=target_new, max_scan=max_scan)
 
 
 @app.post("/api/build")
 def api_build():
     return build_narratives()
+
+
+@app.post("/api/refresh")
+def api_refresh(
+    target_new: int = Query(default=3, ge=1, le=20),
+    max_scan: int = Query(default=30, ge=1, le=100),
+):
+    ingest_result = ingest_feed(target_new=target_new, max_scan=max_scan)
+    build_result = build_narratives()
+    return {
+        "ingest": ingest_result,
+        "build": build_result,
+    }
 
 
 @app.get("/api/claims")
@@ -50,3 +67,27 @@ def api_claims():
 @app.get("/api/narratives")
 def api_narratives():
     return get_narratives()
+
+
+@app.get("/api/debug")
+def api_debug():
+    claims = get_claims()
+    narratives = get_narratives()
+    return {
+        "claims_count": len(claims),
+        "narratives_count": len(narratives),
+        "latest_claim": claims[0] if claims else None,
+        "latest_narrative": narratives[0] if narratives else None,
+    }
+
+
+@app.post("/api/reset")
+def api_reset():
+    db = SessionLocal()
+    try:
+        db.query(Claim).delete()
+        db.query(Narrative).delete()
+        db.commit()
+        return {"status": "ok", "message": "Database cleared"}
+    finally:
+        db.close()

@@ -67,6 +67,11 @@
                 color: var(--text);
             }
 
+            button.warn {
+                background: #4a2f35;
+                color: #ffd7dc;
+            }
+
             button:disabled {
                 opacity: 0.6;
                 cursor: wait;
@@ -190,9 +195,11 @@
         <p class="sub">AI-powered dashboard for extracting claims and grouping them into misinformation narratives.</p>
 
         <div class="controls">
-            <button id="ingestBtn">Ingest feed</button>
+            <button id="refreshAllBtn">Get new fact-checks</button>
+            <button id="ingestBtn" class="secondary">Ingest only</button>
             <button id="buildBtn" class="secondary">Build narratives</button>
-            <button id="refreshBtn" class="secondary">Refresh</button>
+            <button id="refreshBtn" class="secondary">Refresh dashboard</button>
+            <button id="resetBtn" class="warn">Reset local DB</button>
         </div>
 
         <div id="status" class="status">Ready.</div>
@@ -217,144 +224,202 @@
     </div>
 
     <script>
-    const statusEl = document.getElementById('status');
-    const ingestBtn = document.getElementById('ingestBtn');
-    const buildBtn = document.getElementById('buildBtn');
-    const refreshBtn = document.getElementById('refreshBtn');
+        const statusEl = document.getElementById('status');
+        const refreshAllBtn = document.getElementById('refreshAllBtn');
+        const ingestBtn = document.getElementById('ingestBtn');
+        const buildBtn = document.getElementById('buildBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const resetBtn = document.getElementById('resetBtn');
 
-    const metricNarratives = document.getElementById('metricNarratives');
-    const metricClaims = document.getElementById('metricClaims');
-    const metricHighestRisk = document.getElementById('metricHighestRisk');
-    const narrativesEl = document.getElementById('narratives');
+        const metricNarratives = document.getElementById('metricNarratives');
+        const metricClaims = document.getElementById('metricClaims');
+        const metricHighestRisk = document.getElementById('metricHighestRisk');
+        const narrativesEl = document.getElementById('narratives');
 
-    async function api(path, options = {}) {
-      const res = await fetch(path, options);
-      const text = await res.text();
-      let data;
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        throw new Error(text || 'Unknown response');
-      }
-      if (!res.ok) {
-        throw new Error(data.detail || JSON.stringify(data));
-      }
-      return data;
-    }
+        async function api(path, options = {}) {
+            const res = await fetch(path, options);
+            const text = await res.text();
+            let data;
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch {
+                throw new Error(text || 'Unknown response');
+            }
+            if (!res.ok) {
+                throw new Error(data.detail || JSON.stringify(data));
+            }
+            return data;
+        }
 
-    function setBusy(isBusy) {
-      ingestBtn.disabled = isBusy;
-      buildBtn.disabled = isBusy;
-      refreshBtn.disabled = isBusy;
-    }
+        function setBusy(isBusy) {
+            refreshAllBtn.disabled = isBusy;
+            ingestBtn.disabled = isBusy;
+            buildBtn.disabled = isBusy;
+            refreshBtn.disabled = isBusy;
+            resetBtn.disabled = isBusy;
+        }
 
-    function renderNarratives(narratives) {
-      metricNarratives.textContent = narratives.length;
+        function renderNarratives(narratives) {
+            metricNarratives.textContent = narratives.length;
 
-      const claimCount = narratives.reduce((sum, n) => sum + (n.claim_count || 0), 0);
-      metricClaims.textContent = claimCount;
+            const claimCount = narratives.reduce((sum, n) => sum + (n.claim_count || 0), 0);
+            metricClaims.textContent = claimCount;
 
-      const highestRisk = narratives.length
-        ? Math.max(...narratives.map(n => Number(n.risk_score || 0)))
-        : 0;
-      metricHighestRisk.textContent = highestRisk;
+            const highestRisk = narratives.length
+                ? Math.max(...narratives.map(n => Number(n.risk_score || 0)))
+                : 0;
+            metricHighestRisk.textContent = highestRisk;
 
-      if (!narratives.length) {
-        narrativesEl.innerHTML = `
-          <div class="empty">
-            No narratives yet. Click <strong>Ingest feed</strong>, then <strong>Build narratives</strong>.
-          </div>
-        `;
-        return;
-      }
+            if (!narratives.length) {
+                narrativesEl.innerHTML = `
+              <div class="empty">
+                No narratives yet. Click <strong>Get new fact-checks</strong> to ingest unseen items and rebuild the dashboard.
+              </div>
+            `;
+                return;
+            }
 
-      narrativesEl.innerHTML = narratives.map(n => `
-        <div class="narrative-card">
-          <div class="row">
-            <div>
-              <div style="font-size: 22px; font-weight: 800;">${escapeHtml(n.title)}</div>
-              <div class="small">Topic: ${escapeHtml(n.topic)} · Claims: ${n.claim_count}</div>
-            </div>
-            <div>
-              <span class="badge ${n.risk_level}">${n.risk_level.toUpperCase()} · ${n.risk_score}</span>
-            </div>
-          </div>
-
-          <div style="margin-top: 12px;">${escapeHtml(n.summary || '')}</div>
-          <div class="small" style="margin-top: 8px;">Keywords: ${escapeHtml(n.top_keywords || '—')}</div>
-
-          <div class="claims">
-            ${(n.claims || []).map(c => `
-              <div class="claim">
-                <div style="font-weight: 700; margin-bottom: 6px;">${escapeHtml(c.normalized_claim)}</div>
-                <div class="small">${escapeHtml(c.category)} · confidence ${Number(c.confidence || 0).toFixed(2)}</div>
-                <div style="margin-top: 8px;">
-                  <a href="${c.url}" target="_blank" rel="noreferrer">Open source</a>
+            narrativesEl.innerHTML = narratives.map(n => `
+            <div class="narrative-card">
+              <div class="row">
+                <div>
+                  <div style="font-size: 22px; font-weight: 800;">${escapeHtml(n.title)}</div>
+                  <div class="small">Topic: ${escapeHtml(n.topic)} Â· Claims: ${n.claim_count}</div>
+                </div>
+                <div>
+                  <span class="badge ${n.risk_level}">${n.risk_level.toUpperCase()} Â· ${n.risk_score}</span>
                 </div>
               </div>
-            `).join('')}
-          </div>
-        </div>
-      `).join('');
-    }
 
-    function escapeHtml(str) {
-      return String(str ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
-    }
+              <div style="margin-top: 12px;">${escapeHtml(n.summary || '')}</div>
+              <div class="small" style="margin-top: 8px;">Keywords: ${escapeHtml(n.top_keywords || 'â€”')}</div>
 
-    async function loadNarratives() {
-      const narratives = await api('/api/narratives');
-      renderNarratives(narratives);
-    }
+              <div class="claims">
+                ${(n.claims || []).map(c => `
+                  <div class="claim">
+                    <div style="font-weight: 700; margin-bottom: 6px;">${escapeHtml(c.normalized_claim)}</div>
+                    <div class="small">${escapeHtml(c.category)} Â· confidence ${Number(c.confidence || 0).toFixed(2)}</div>
+                    <div style="margin-top: 8px;">
+                      <a href="${c.url}" target="_blank" rel="noreferrer">Open source</a>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `).join('');
+        }
 
-    ingestBtn.addEventListener('click', async () => {
-      try {
-        setBusy(true);
-        statusEl.textContent = 'Ingesting recent feed items through the agent...';
-        const result = await api('/api/ingest?limit=3', { method: 'POST' });
-        statusEl.textContent = `Ingest complete. Created ${result.created}, skipped ${result.skipped}, errors ${result.errors.length}.`;
-      } catch (err) {
-        statusEl.textContent = `Ingest failed: ${err.message}`;
-      } finally {
-        setBusy(false);
-      }
-    });
+        function escapeHtml(str) {
+            return String(str ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
 
-    buildBtn.addEventListener('click', async () => {
-      try {
-        setBusy(true);
-        statusEl.textContent = 'Building narratives from saved claims...';
-        const result = await api('/api/build', { method: 'POST' });
-        statusEl.textContent = `Built ${result.narratives_created} narratives.`;
-        await loadNarratives();
-      } catch (err) {
-        statusEl.textContent = `Build failed: ${err.message}`;
-      } finally {
-        setBusy(false);
-      }
-    });
+        async function loadNarratives() {
+            const narratives = await api('/api/narratives');
+            renderNarratives(narratives);
+        }
 
-    refreshBtn.addEventListener('click', async () => {
-      try {
-        setBusy(true);
-        statusEl.textContent = 'Refreshing dashboard...';
-        await loadNarratives();
-        statusEl.textContent = 'Dashboard refreshed.';
-      } catch (err) {
-        statusEl.textContent = `Refresh failed: ${err.message}`;
-      } finally {
-        setBusy(false);
-      }
-    });
+        async function loadDebugCounts() {
+            const debug = await api('/api/debug');
+            metricClaims.textContent = debug.claims_count || 0;
+            metricNarratives.textContent = debug.narratives_count || 0;
+        }
 
-    loadNarratives().catch(err => {
-      statusEl.textContent = `Initial load failed: ${err.message}`;
-    });
+        refreshAllBtn.addEventListener('click', async () => {
+            try {
+                setBusy(true);
+                statusEl.textContent = 'Finding unseen fact-checks, ingesting them, and rebuilding narratives...';
+                const result = await api('/api/refresh?target_new=3&max_scan=30', { method: 'POST' });
+
+                const ingest = result.ingest || {};
+                const build = result.build || {};
+
+                if ((ingest.created || 0) === 0) {
+                    statusEl.textContent = `No new unseen fact-checks found. Skipped ${ingest.skipped || 0}, scanned ${ingest.scanned || 0}. Existing narratives were rebuilt.`;
+                } else {
+                    statusEl.textContent = `Added ${ingest.created} new fact-check(s), skipped ${ingest.skipped || 0}, scanned ${ingest.scanned || 0}, built ${build.narratives_created || 0} narrative(s).`;
+                }
+
+                await loadNarratives();
+            } catch (err) {
+                statusEl.textContent = `Refresh failed: ${err.message}`;
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        ingestBtn.addEventListener('click', async () => {
+            try {
+                setBusy(true);
+                statusEl.textContent = 'Scanning feed for unseen fact-checks...';
+                const result = await api('/api/ingest?target_new=3&max_scan=30', { method: 'POST' });
+
+                if ((result.created || 0) === 0) {
+                    statusEl.textContent = `No new unseen fact-checks found. Skipped ${result.skipped || 0}, scanned ${result.scanned || 0}.`;
+                } else {
+                    statusEl.textContent = `Ingest complete. Created ${result.created}, skipped ${result.skipped}, scanned ${result.scanned}, errors ${(result.errors || []).length}.`;
+                }
+
+                await loadDebugCounts();
+            } catch (err) {
+                statusEl.textContent = `Ingest failed: ${err.message}`;
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        buildBtn.addEventListener('click', async () => {
+            try {
+                setBusy(true);
+                statusEl.textContent = 'Building narratives from saved claims...';
+                const result = await api('/api/build', { method: 'POST' });
+                statusEl.textContent = result.message || `Built ${result.narratives_created} narratives.`;
+                await loadNarratives();
+            } catch (err) {
+                statusEl.textContent = `Build failed: ${err.message}`;
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        refreshBtn.addEventListener('click', async () => {
+            try {
+                setBusy(true);
+                statusEl.textContent = 'Refreshing dashboard...';
+                await loadNarratives();
+                statusEl.textContent = 'Dashboard refreshed.';
+            } catch (err) {
+                statusEl.textContent = `Refresh failed: ${err.message}`;
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        resetBtn.addEventListener('click', async () => {
+            const confirmed = window.confirm('This will delete all saved claims and narratives from the local database. Continue?');
+            if (!confirmed) return;
+
+            try {
+                setBusy(true);
+                statusEl.textContent = 'Resetting local database...';
+                await api('/api/reset', { method: 'POST' });
+                await loadNarratives();
+                await loadDebugCounts();
+                statusEl.textContent = 'Local database reset complete.';
+            } catch (err) {
+                statusEl.textContent = `Reset failed: ${err.message}`;
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        loadNarratives().then(loadDebugCounts).catch(err => {
+            statusEl.textContent = `Initial load failed: ${err.message}`;
+        });
     </script>
 </body>
 </html>
