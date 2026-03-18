@@ -8,6 +8,7 @@ from database import Base, engine, SessionLocal
 from models import Claim, Narrative
 from services import build_narratives, get_claims, get_narratives, ingest_feed
 
+Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Misinformation Radar")
